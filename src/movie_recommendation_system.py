@@ -1,116 +1,89 @@
-# 🎬 Movie Recommendation System using Machine Learning
+# src/movie_recommendation_system.py
 
-This project is a **Content-Based Movie Recommendation System** built using Python.  
-It uses TMDB movie metadata and recommends similar movies using **Count Vectorizer + Cosine Similarity**.
-
----
-
-# 📌 Full Source Code
-
-Below is the complete Python code extracted from the Jupyter Notebook:
-
-```python
-# ---- Movie Recommendation System ----
-import numpy as np
 import pandas as pd
-import nltk
-from nltk.stem.porter import PorterStemmer
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-
-# Read datasets
-movies = pd.read_csv("data/movies.csv")
-
-# Merge datasets on title
-movies = movies.merge(credits, on="title")
-
-# Select useful columns
-movies = movies[["movie_id", "title", "overview", "genres", "keywords", "cast", "crew"]]
-
-# Drop missing values
-movies.dropna(inplace=True)
-
-# Convert stringified lists to python objects
+from nltk.stem.porter import PorterStemmer
 import ast
+
+# -----------------------------
+# Load the dataset
+# -----------------------------
+movies = pd.read_csv("data/movies.csv")  # Only use movies.csv
+
+# Ensure required columns exist
+required_cols = ["title", "overview", "genres", "keywords", "cast", "crew"]
+for col in required_cols:
+    if col not in movies.columns:
+        movies[col] = ""  # Fill missing columns with empty strings
+
+# Fill missing overviews
+movies["overview"] = movies["overview"].fillna("")
+
+# -----------------------------
+# Helper functions
+# -----------------------------
 def convert(obj):
-    L = []
-    for i in ast.literal_eval(obj):
-        L.append(i["name"])
-    return L
+    """Convert stringified list of dicts to list of names"""
+    try:
+        return [i["name"] for i in ast.literal_eval(obj)]
+    except:
+        return []
 
-movies["genres"] = movies["genres"].apply(convert)
-movies["keywords"] = movies["keywords"].apply(convert)
-
-def convert3(obj):
-    L = []
-    count = 0
-    for i in ast.literal_eval(obj):
-        if count < 3:
-            L.append(i["name"])
-            count += 1
-        else:
-            break
-    return L
-
-movies["cast"] = movies["cast"].apply(convert3)
-
-def fetch_director(obj):
-    L = []
-    for i in ast.literal_eval(obj):
-        if i["job"] == "Director":
-            L.append(i["name"])
-            break
-    return L
-
-movies["crew"] = movies["crew"].apply(fetch_director)
-
-# Clean overview
-movies["overview"] = movies["overview"].apply(lambda x: x.split())
-
-# Remove spaces
 def collapse(L):
+    """Remove spaces in list items"""
     return [i.replace(" ", "") for i in L]
 
+# -----------------------------
+# Process columns
+# -----------------------------
+movies["genres"] = movies["genres"].apply(convert)
+movies["keywords"] = movies["keywords"].apply(convert)
+movies["cast"] = movies["cast"].apply(lambda x: convert(x)[:3])  # take top 3 cast
+movies["crew"] = movies["crew"].apply(lambda x: [i for i in convert(x) if "Director" in i])
+
+# Split overview into words
+movies["overview"] = movies["overview"].apply(lambda x: x.split())
+
+# Remove spaces in all list columns
 movies["genres"] = movies["genres"].apply(collapse)
 movies["keywords"] = movies["keywords"].apply(collapse)
 movies["cast"] = movies["cast"].apply(collapse)
 movies["crew"] = movies["crew"].apply(collapse)
 
-# Create "tags"
-movies["tags"] = (
-    movies["overview"] + movies["genres"] + movies["keywords"] + movies["cast"] + movies["crew"]
-)
-
-new_df = movies[["movie_id", "title", "tags"]]
-new_df["tags"] = new_df["tags"].apply(lambda x: " ".join(x))
-new_df["tags"] = new_df["tags"].apply(lambda x: x.lower())
+# -----------------------------
+# Create "tags" for recommendation
+# -----------------------------
+movies["tags"] = movies["overview"] + movies["genres"] + movies["keywords"] + movies["cast"] + movies["crew"]
+movies["tags"] = movies["tags"].apply(lambda x: " ".join(x).lower())
 
 # Stemming
 ps = PorterStemmer()
-def stem(text):
-    y = []
-    for i in text.split():
-        y.append(ps.stem(i))
-    return " ".join(y)
+movies["tags"] = movies["tags"].apply(lambda x: " ".join([ps.stem(i) for i in x.split()]))
 
-new_df["tags"] = new_df["tags"].apply(stem)
-
-# Vectorization
+# -----------------------------
+# Vectorization and similarity
+# -----------------------------
 cv = CountVectorizer(max_features=5000, stop_words="english")
-vectors = cv.fit_transform(new_df["tags"]).toarray()
-
-# Similarity matrix
+vectors = cv.fit_transform(movies["tags"]).toarray()
 similarity = cosine_similarity(vectors)
 
+# -----------------------------
 # Recommendation function
+# -----------------------------
 def recommend(movie):
-    index = new_df[new_df["title"] == movie].index[0]
-    distances = similarity[index]
-    movies_list = sorted(list(enumerate(distances)), reverse=True, key=lambda x: x[1])[1:6]
-    
+    if movie not in movies["title"].values:
+        print(f"Movie '{movie}' not found!")
+        return
+    idx = movies[movies["title"] == movie].index[0]
+    distances = similarity[idx]
+    recommended = sorted(list(enumerate(distances)), reverse=True, key=lambda x: x[1])[1:6]
     print("Recommended Movies:")
-    for i in movies_list:
-        print(new_df.iloc[i[0]].title)
+    for i in recommended:
+        print(movies.iloc[i[0]].title)
 
+# -----------------------------
 # Example run
-recommend("Avatar")
+# -----------------------------
+if __name__ == "__main__":
+    recommend("Avatar")
